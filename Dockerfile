@@ -36,37 +36,20 @@ WORKDIR /src/jupyterhub
 RUN python3 setup.py bdist_wheel
 RUN python3 -m pip wheel --wheel-dir wheelhouse dist/*.whl
 
-#===============================================================#
-#         Final Image (JupyterHub + CUDA) Installation          #
-#===============================================================#
-FROM $BASE_IMAGE
+#========================================================#
+#           NVIDIA CUDA / CuDNN installation             #
+#========================================================#
+# This is building images for CUDA and CuDNN
+FROM $BASE_IMAGE AS cuda
+LABEL maintainer "NVIDIA CORPORATION <cudatools@nvidia.com>"
 
-USER root
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update \
- && apt-get install -yq --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    gnupg \
-    locales \
-    python3-pip \
-    python3-pycurl \
-    nodejs \
-    npm \
-    sudo \
-    vim \
-    r-base \
-    libzmq3-dev libcurl4-openssl-dev libssl-dev jupyter-core jupyter-client \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg2 curl ca-certificates && \
     curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub | apt-key add - && \
     echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64 /" > /etc/apt/sources.list.d/cuda.list && \
     echo "deb https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2004/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list && \
     apt-get purge --autoremove -y curl \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 ENV CUDA_VERSION 11.0.3
 
@@ -89,6 +72,32 @@ ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
 ENV NVIDIA_REQUIRE_CUDA "cuda>=11.0 brand=tesla,driver>=418,driver<419 brand=tesla,driver>=440,driver<441 brand=tesla,driver>=450,driver<451"
 
+#========================================================#
+#         Final Image (JupyterHub) Installation          #
+#========================================================#
+FROM $BASE_IMAGE
+
+USER root
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -yq --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    gnupg \
+    locales \
+    python3-pip \
+    python3-pycurl \
+    nodejs \
+    npm \
+    sudo \
+    vim \
+    r-base \
+    libzmq3-dev libcurl4-openssl-dev libssl-dev jupyter-core jupyter-client \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
 ENV SHELL=/bin/bash \
     LC_ALL=en_US.UTF-8 \
@@ -117,7 +126,7 @@ RUN mkdir workspace/
 # Install R kernel
 COPY IRkernel.r IRkernel.r
 COPY requirements.txt requirements.txt
-# RUN Rscript IRkernel.r
+RUN Rscript IRkernel.r
 RUN python3 -m pip install -r requirements.txt
 
 # Preserve Configuration
