@@ -1,34 +1,17 @@
-# An incomplete base Docker image for running JupyterHub
+# QABE Docker image for running JupyterHub
 #
-# Add your configuration to create a complete derivative Docker image.
-#
-# Include your configuration settings by starting with one of two options:
-#
-# Option 1:
-#
-# FROM jupyterhub/jupyterhub:latest
-#
-# And put your configuration file jupyterhub_config.py in /srv/jupyterhub/jupyterhub_config.py.
-#
-# Option 2:
-#
-# Or you can create your jupyterhub config and database on the host machine, and mount it with:
-#
-# docker run -v $PWD:/srv/jupyterhub -t jupyterhub/jupyterhub
-#
-# NOTE
-# If you base on jupyterhub/jupyterhub-onbuild
-# your jupyterhub_config.py will be added automatically
-# from your docker directory.
+# Note that we should install CUDA and CuDNN images from cuda/cudnn
 
-ARG BASE_IMAGE=ubuntu:focal-20200729@sha256:6f2fb2f9fb5582f8b587837afd6ea8f37d8d1d9e41168c90f410a6ef15fa8ce5
+#========================================================#
+#               Base Builder installation                #
+#========================================================#
+ARG BASE_IMAGE=ubuntu:20.04
 FROM $BASE_IMAGE AS builder
 
 USER root
 
 ENV DEBIAN_FRONTEND noninteractive
-RUN apt-get update \
- && apt-get install -yq --no-install-recommends \
+RUN apt-get update && apt-get install -yq --no-install-recommends \
     build-essential \
     ca-certificates \
     locales \
@@ -53,7 +36,45 @@ WORKDIR /src/jupyterhub
 RUN python3 setup.py bdist_wheel
 RUN python3 -m pip wheel --wheel-dir wheelhouse dist/*.whl
 
+#========================================================#
+#           NVIDIA CUDA / CuDNN installation             #
+#========================================================#
+# This is building images for CUDA and CuDNN
+FROM $BASE_IMAGE AS cuda
+LABEL maintainer "NVIDIA CORPORATION <cudatools@nvidia.com>"
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gnupg2 curl ca-certificates && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub | apt-key add - && \
+    echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64 /" > /etc/apt/sources.list.d/cuda.list && \
+    echo "deb https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2004/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list && \
+    apt-get purge --autoremove -y curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CUDA_VERSION 11.0.3
+
+# For libraries in the cuda-compat-* package: https://docs.nvidia.com/cuda/eula/index.html#attachment-a
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cuda-cudart-11-0=11.0.221-1 \
+    cuda-compat-11-0 \
+    && ln -s cuda-11.0 /usr/local/cuda && \
+    rm -rf /var/lib/apt/lists/*
+
+# Required for nvidia-docker v1
+RUN echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf \
+    && echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf
+
+ENV PATH /usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64
+
+# nvidia-container-runtime
+ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
+ENV NVIDIA_REQUIRE_CUDA "cuda>=11.0 brand=tesla,driver>=418,driver<419 brand=tesla,driver>=440,driver<441 brand=tesla,driver>=450,driver<451"
+
+#========================================================#
+#         Final Image (JupyterHub) Installation          #
+#========================================================#
 FROM $BASE_IMAGE
 
 USER root
@@ -62,6 +83,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
  && apt-get install -yq --no-install-recommends \
+    build-essential \
     ca-certificates \
     curl \
     gnupg \
@@ -70,6 +92,10 @@ RUN apt-get update \
     python3-pycurl \
     nodejs \
     npm \
+    sudo \
+    vim \
+    r-base \
+    libzmq3-dev libcurl4-openssl-dev libssl-dev jupyter-core jupyter-client \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
@@ -90,12 +116,22 @@ RUN npm install -g configurable-http-proxy@^4.2.0 \
 COPY --from=builder /src/jupyterhub/wheelhouse /tmp/wheelhouse
 RUN python3 -m pip install --no-cache /tmp/wheelhouse/*
 
+# To use Jupyter Lab, we should install jupyterlab
+RUN python3 -m pip install jupyterlab
+
 RUN mkdir -p /srv/jupyterhub/
 WORKDIR /srv/jupyterhub/
+RUN mkdir workspace/
+
+# Install R kernel
+COPY IRkernel.r IRkernel.r
+COPY requirements.txt requirements.txt
+RUN Rscript IRkernel.r
+RUN python -m pip install -r requirements.txt
+
+# Preserve Configuration
+COPY jupyterhub_config.py jupyterhub_config.py
 
 EXPOSE 8000
-
-LABEL maintainer="Jupyter Project <jupyter@googlegroups.com>"
-LABEL org.jupyter.service="jupyterhub"
 
 CMD ["jupyterhub"]

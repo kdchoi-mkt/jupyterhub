@@ -11,7 +11,7 @@ docs/source/_static/rest-api
 .ipynb_checkpoints
 # ignore config file at the top-level of the repo
 # but not sub-dirs
-/jupyterhub_config.py
+# /jupyterhub_config.py
 jupyterhub_cookie_secret
 jupyterhub.sqlite
 package-lock.json
